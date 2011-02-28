@@ -15,6 +15,7 @@ The most essential parsing parts of the code are taken directly from chapter 10 
 > import System.IO
 > import System.Random (randomIO)
 > import System.Environment (getArgs)
+> import System.FilePath (pathSeparator)
 > import System.Exit (ExitCode(..),exitWith)
 > import System.Directory (getTemporaryDirectory)
 > import "mtl" Control.Monad.Reader
@@ -28,6 +29,24 @@ The most essential parsing parts of the code are taken directly from chapter 10 
 > import Data.Either.Utils (fromRight)
 > import Data.Colour.Word8
 > import System.Console.CmdArgs
+> import Parse
+>	(
+>	  ParseState(..)
+>       , Parse(..)
+>       , (==>)
+>       , (==>&)
+>       , parseByte
+>       , parseNat
+>       , skipSpaces
+>       , assert
+>       , w2c
+>       , parseWhile
+>       , parseWhileWith
+>       , identity
+>       , parse
+>       , parseBytes
+>       )
+> import PNM (Greymap(..))
 
 > (~~) :: L.ByteString -> L.ByteString -> L.ByteString
 
@@ -84,79 +103,28 @@ The most essential parsing parts of the code are taken directly from chapter 10 
 > rgbPixel2ppmChars (Colour8 r g b)
 >  = L.pack [ r, g, b ]
 
-  ## The actual parser, highest rated approach
+  ## Some comments to the chosen parser implementation
 
-> newtype Parse a = Parse {
->   runParse :: ParseState -> Either String (a, ParseState)
-> }
+  This function leaves the parse state untouched and uses its argument as the result of the parse.
 
-> data ParseState = ParseState {
->   string :: L.ByteString
->   , offset :: Int64           -- imported from Data.Int
-> } deriving (Show)
-
-> getState :: Parse ParseState
-
-> getState = Parse (\s -> Right (s, s))
-
-> putState :: ParseState -> Parse ()
-
-> putState s = Parse (\_ -> Right ((), s))
-
-> instance Monad Parse where
->   return = identity
->   (>>=) = (==>)
->   fail = bail
-
-> bail :: String -> Parse a
-
-> bail err = Parse $ \s -> Left $
->   "byte offset " ++ show (offset s) ++ ": " ++ err
-
-  This function leaves the parse state untouched and uses its argument
-  as the result of the parse.
-
-> identity :: a -> Parse a
-
-> identity a = Parse (\s -> Right (a, s))
+> --identity :: a -> Parse a
 
   The "bind" function for the `Monad` instance.
 
-> (==>) :: Parse a -> (a -> Parse b) -> Parse b
+> --(==>) :: Parse a -> (a -> Parse b) -> Parse b
 
-> firstParser ==> secondParser  =  Parse chainedParser
->   where chainedParser initState   =
->           case runParse firstParser initState of
->             Left errMessage ->
->                 Left errMessage
->             Right (firstResult, newState) ->
->                 runParse (secondParser firstResult) newState
+  The function we're `fmap`ping should be applied to the current result of a parse, and leave the parse state untouched.
 
-  The function we're `fmap`ping should be applied to the current result of a parse, and
-  leave the parse state untouched.
+> --instance Functor Parse where
+> --  fmap f parser = parser ==> \result ->
+> --    identity (f result)
 
-> instance Functor Parse where
->   fmap f parser = parser ==> \result ->
->     identity (f result)
+  Check that identity is preserved on a parse that ought to fail: parsing a byte from an empty string (`(<$>)` is `fmap`): `parse parseByte L.empty`, which should have the same result as `parse (id <$> parseByte) L.empty`.
 
-  Check that identity is preserved on a parse that ought to fail: parsing a byte from an empty string
-  (`(<$>)` is `fmap`): `parse parseByte L.empty`, which should have the same result as
-  `parse (id <$> parseByte) L.empty`.
-
-  How can we use this wrapped function to parse something (applies to i. e. `identity` either)?
-  At first we have to peel off the `Parse` wrapper so that we can get at the function inside.
-  We do so using the `runParse` function. We also need to construct a `ParseState`, and then
-  run our parsing function on it. Finally we'd like to separate the result of the parse from
-  the final `ParseState`.
+  How can we use this wrapped function to parse something (applies to i. e. `identity` either)? At first we have to peel off the `Parse` wrapper so that we can get at the function inside. We do so using the `runParse` function. We also need to construct a `ParseState`, and then run our parsing function on it. Finally we'd like to separate the result of the parse from the final `ParseState`.
 
   [manpages for ppm etc.](http://local.wasp.uwa.edu.au/~pbourke/dataformats/ppm/) tell us:<br/>
-  PPM headers are P3 | P6: ascii | byte. An ascii entry has three numbers in the r-g-b order usually where
-  each number usually ranges 0..255 (black..white), but thats not obligate.
-  When stored as binary, the order is the same, but **one byte** is used
-  **per color component**. Meaning 8 bits of information are possible for each component, makes 3x8 bits = 24 Bit
-  color image storage possible with the binary format (`2^8^3` = `2^24` = `256 x 256 x 256` = `16777216`
-  colors) as opposed to the ascii format where the color depth practically isn't limited to 256, because one
-  may use - manpage says upper limit is - 65536 per color component entry.
+  PPM headers are P3 | P6: ascii | byte. An ascii entry has three numbers in the r-g-b order usually where each number usually ranges 0..255 (black..white), but thats not obligate. When stored as binary, the order is the same, but **one byte** is used **per color component**. Meaning 8 bits of information are possible for each component, makes 3x8 bits = 24 Bit color image storage possible with the binary format (`2^8^3` = `2^24` = `256 x 256 x 256` = `16777216` colors) as opposed to the ascii format where the color depth practically isn't limited to 256, because one may use - manpage says upper limit is - 65536 per color component entry.
 
   (*) See [here](http://netpbm.sourceforge.net/doc/ppm.html): "... raster of Height rows... Each row consists of Width pixels... Each pixel is a triplet of red, green, and blue samples... Each sample is represented in pure binary by either 1 or 2 bytes..." So it comes taking the number of overall bytes to be parsed (expression `width * height`) times three.
 
@@ -165,7 +133,7 @@ The most essential parsing parts of the code are taken directly from chapter 10 
     (splitEvery 3 . L.unpack . unwrap . parse parseRawPPM . ppmEncode) [[Colour8 0 0 0, Colour8 1 0 0], [Colour8 0 1 0, Colour8 1 1 1]]    
 
 > -- for PPM P6 (binary) format
-> parseRawPPM :: Parse Bytemap
+> parseRawPPM :: Parse Greymap
 
 > parseRawPPM =
 >  parseWhileWith w2c notWhite ==> \header -> skipSpaces ==>&
@@ -176,120 +144,34 @@ The most essential parsing parts of the code are taken directly from chapter 10 
 >           parseByte ==>&
 >           -- (see (*) in the text above this function)
 >           parseBytes (width * height * 3) ==> \bitmap ->
->           identity (Bytemap width height maxValue bitmap)
+>           identity (Greymap width height maxValue bitmap)
 >     where notWhite = (`notElem` " \r\n\t")
 
   The function for running the `Parse` actually, base test run: `parse parseRawPPM L.empty`
 
-> parse :: Parse a -> L.ByteString -> Either String a
+> --parse :: Parse a -> L.ByteString -> Either String a
 
-> parse parser initState
->   = case runParse parser (ParseState initState 0) of
->   Left err          -> Left err
->   Right (result, _) -> Right result
+  This "peek" function returns `Nothing` if we're at the end of the input string. Otherwise it returns the next character without consuming it (i. e. it inspect, but doesnt disturb the current parsing state). Test run: `parse peekByte L.empty`.
 
-> (==>&) :: Parse a -> Parse b -> Parse b
-
-> p ==>& f = p ==> \_ -> f
-
-> assert :: Bool -> String -> Parse ()
-
-> assert True  _   = identity ()
-> assert False err = bail err
-
-  This "peek" function returns `Nothing` if we're at the end of the input string. Otherwise it returns
-  the next character without consuming it (i. e. it inspect, but doesnt disturb the current parsing state).
-  Test run: `parse peekByte L.empty`.
-
-> peekByte :: Parse (Maybe Word8)
-
-> peekByte = (fmap fst . L.uncons . string) <$> getState
+> --peekByte :: Parse (Maybe Word8)
 
   (Hint: Import the `Word8` type from `Data.Word`)
 
-> parseByte :: Parse Word8
-
-> parseByte =
->     getState ==> \initState ->
->     case L.uncons (string initState) of
->       Nothing ->
->           bail "no more input"
->       Just (byte,remainder) ->
->           putState newState ==> \_ ->
->           identity byte
->        where newState = initState { string = remainder,
->                                     offset = newOffset }
->              newOffset = offset initState + 1
-
-  Another generic combinator, the `Parse` analogue of the familiar `takeWhile`. It consumes its input while
-  its predicate returns `True`. (Its the version with no functors - a copy of `parseWhileVerbose` - likely
-  easier to read if one is not common with functors)
+  Another generic combinator, the `Parse` analogue of the familiar `takeWhile`. It consumes its input while its predicate returns `True`. (Its the version with no functors - a copy of `parseWhileVerbose` - likely easier to read if one is not common with functors)
   
-> parseWhile :: (Word8 -> Bool) -> Parse [Word8]
+> --parseWhile :: (Word8 -> Bool) -> Parse [Word8]
 
-> parseWhile p =
->          peekByte ==> \mc ->
->             case mc of
->               Nothing -> identity []
->               Just c | p c ->
->                 parseByte ==> \b ->
->                 parseWhile p ==> \bs ->
->                 identity (b:bs)
->                      | otherwise ->
->                 identity []
+  `ByteString`s contain `Word8`s latter which are `Int` instances. Decode to the `Char` representation as they are in normal `String`s.
 
-> parseWhileWith :: (Word8 -> a) -> (a -> Bool) -> Parse [a]
+> --w2c :: Word8 -> Char
 
-> parseWhileWith f p = fmap f <$> parseWhile (p . f)
+  Spaces Parser - active as long as spaces are decoded, simply skips them by traversing further down the parsing chain. Test: `parse skipSpaces L.empty`.
 
-  `ByteString`s contain `Word8`s latter which are `Int` instances. Decode to the `Char` representation
-  as they are in normal `String`s.
+> --skipSpaces :: Parse ()
 
-> w2c :: Word8 -> Char
-> w2c = chr . fromIntegral
-
-  Spaces Parser - active as long as spaces are decoded, simply skips them by traversing further down the
-  parsing chain. Test: `parse skipSpaces L.empty`.
-
-> skipSpaces :: Parse ()
-> skipSpaces = parseWhileWith w2c isSpace ==>& identity ()
-
-  Parser for natural numbers - as long as `Int` values are decoded, simply return that decoded value unless it
-  doesn't fulfill `Int` constraints (i. e. is negative or empty).
-
-  Test run: `parse parseNat $ L8.pack "9"` &#8801; `parse (id <$> parseNat) $ L8.pack "9"`.
+  Parser for natural numbers - as long as `Int` values are decoded, simply return that decoded value unless it doesn't fulfill `Int` constraints (i. e. is negative or empty). Test run: `parse parseNat $ L8.pack "9"` &#8801; `parse (id <$> parseNat) $ L8.pack "9"`.
   
-> parseNat :: Parse Int
-
-> parseNat = parseWhileWith w2c isDigit ==> \digits ->
->          if null digits
->             then bail "no more input"
->          else let n = read digits
->               in if n < 0
->             then bail "integer overflow"
->          else identity n
-
-> parseBytes :: Int -> Parse L.ByteString
-
-> parseBytes n =
->   getState ==> \st ->
->     let n' = fromIntegral n
->         (h, t) = L.splitAt n' (string st)
->         st' = st { offset = offset st + L.length h, string = t }
->     in putState st' ==>&
->        assert (L.length h == n') "end of input" ==>&
->        identity h   
-
-> data Bytemap = Bytemap {
->     bytesWidth :: Int
->   , bytesHeight :: Int
->   , bytesMax :: Int
->   , bytesData :: L.ByteString
-> } deriving (Eq)
-
-> instance Show Bytemap where
->   show (Bytemap w h m d) = "Bytemap " ++ show w ++ "x" ++ show h ++
->                           " " ++ show m ++ " data: " ++ (show $ L.unpack d)
+> --parseNat :: Parse Int
 
 > showRGBTriples :: L.ByteString -> [[Word8]]
 
@@ -304,9 +186,9 @@ The most essential parsing parts of the code are taken directly from chapter 10 
 >   concat $ intersperse c strings
 >   where strings = map (show . fromEnum) $ concat triples
 
-> unwrap :: Either String Bytemap -> L.ByteString
+> unwrap :: Either String Greymap -> L.ByteString
 
-> unwrap bytemap = bytesData $ fromRight bytemap
+> unwrap bytemap = greyData $ fromRight bytemap
 
   Test run: `writeSamplePPM "e:/temp/test3.ppm"`
 
@@ -339,7 +221,7 @@ The most essential parsing parts of the code are taken directly from chapter 10 
 >     "temp" -> do
 >       r <- randomIO
 >       t <- getTemporaryDirectory
->       writeFile (t ++ "test" ++ show (r + 1 :: Int) ++ ".csv") $ _bytestring2rgbliste_ input
+>       writeFile (t ++ [pathSeparator] ++ "test" ++ show (r + 1 :: Int) ++ ".csv") $ _bytestring2rgbliste_ input
 >     _      -> writeFile _ofilename_ $ _bytestring2rgbliste_ input
 >   where _bytestring2rgbliste_ = w82s ";" . showRGBTriples
 

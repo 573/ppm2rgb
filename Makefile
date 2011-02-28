@@ -8,7 +8,7 @@ HSCOLOUR := hscolour -lit
 	cat $< | $(HSCOLOUR) -css > $@
 
 .lhs.html:
-	cat $< | $(HSCOLOUR) -css | $(PANDOCH) -t html -c hscolour.css > $@
+	cat $< | $(HSCOLOUR) -css | $(PANDOCH) -t html -c data/hscolour.css > $@
 
 .lhs.tex:
 	cat $< | $(PANDOC) -t latex> $@

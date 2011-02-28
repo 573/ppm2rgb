@@ -3,6 +3,7 @@
 *.o
 *.hi
 *.exe
+*.log
 
 /_darcs
 
