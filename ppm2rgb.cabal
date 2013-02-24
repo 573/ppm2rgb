@@ -10,35 +10,39 @@ License-file:         LICENSE
 Author:               Daniel Kahlenberg
 Maintainer:           
 Cabal-version:        >= 1.6
-Tested-With:          GHC==6.12.3
+Tested-With:          GHC==6.12.3, GHC==7.4.2
 category:             Graphics
 homepage:             
 data-files:           data/input_p3.ppm, data/input_p6.ppm
 extra-source-files:   changelog.md, known-issues.md, Nemesis, readme.md
 
 Library
-  ghc-options:       -Wall -threaded -fno-ignore-asserts -fforce-recomp -O2 -funbox-strict-fields -fvia-C -optc-O2
+  ghc-options:       -Wall -fno-ignore-asserts -fforce-recomp -O2 -funbox-strict-fields -fvia-C -optc-O2
   hs-source-dirs:     src
   exposed-modules:    Parse
                     , PNM
-  build-depends:      base >= 2        && < 5
-                    , bytestring     >= 0.9.1.7    &&  < 0.9.1.8
+  build-depends:      base >= 2
+                    , bytestring     >= 0.9.1.7
 
 Executable          ppm2rgb
   Main-Is:            Main.lhs
-  ghc-options:       -Wall -threaded -fno-ignore-asserts -fforce-recomp -O2 -funbox-strict-fields -fvia-C -optc-O2 -optl-Wl,--hash-style=both
+  if os(windows) {
+      ghc-options:       -Wall -fno-ignore-asserts -fforce-recomp -O2 -funbox-strict-fields -fvia-C -optc-O2
+  } else {
+      ghc-options:       -Wall -threaded -fno-ignore-asserts -fforce-recomp -O2 -funbox-strict-fields -fvia-C -optc-O2 -optl-Wl,--hash-style=both
+  }
   ghc-prof-options:  -auto-all
   Hs-Source-Dirs:     src
-  build-depends:      base     >= 2        && < 5
+  build-depends:      base     >= 2
                     -- the one coming with ghc-6.12.3 suffices
-                    , mtl    >= 1    && < 2
+                    , mtl    >= 1
                     , directory    >= 1.0.1.1
                     , filepath
                     , random   >= 1.0.0.2
-                    , Cabal    >= 1.8      && < 1.10
+                    , Cabal    >= 1.8
                     -- the one coming with ghc-6.12.3 suffices
-                    , bytestring     >= 0.9.1.7    &&  < 0.9.1.8
-                    , split    >= 0.1.2.1    && < 0.1.2.3
+                    , bytestring     >= 0.9.1.7
+                    , split    >= 0.1.2.1
                     , MissingH   >= 1.1.0.3
                     , regex-posix    >= 0.94.2
                     , AC-Colour    >= 1.1.3

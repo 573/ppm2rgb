@@ -1,3 +1,11 @@
+2013.02.24
+----------
+
+### Fix
+
+* Removed upper package bounds
+* Splitted cabal section regarding unix-specific linker flags
+
 2011.02.16
 ----------
 
